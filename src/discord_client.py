@@ -26,7 +26,7 @@ MAX_EMBED_TOTAL = 6000
 
 def importance_badge(score: int) -> str:
     if score >= 9:
-        return "🔴 最重要"
+        return "🚨 **緊急・最重要**"
     if score >= 7:
         return "🟠 重要"
     if score >= 5:
@@ -56,9 +56,12 @@ class DiscordClient:
             parts.append(f"💹 経済 {by_cat['business']}")
         breakdown = "  ·  ".join(parts) if parts else ""
 
+        has_urgent = any(item.importance >= 9 for item in items)
+        heading = "🚨 緊急ニュース含む速報" if has_urgent else "🗞️ 話題ニュース ダイジェスト"
+
         content = (
             "━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"### 🗞️ 話題ニュース ダイジェスト  ·  {len(items)}件\n"
+            f"### {heading}  ·  {len(items)}件\n"
             f"{now}"
         )
         if breakdown:

@@ -159,8 +159,8 @@ def main() -> None:
     parser.add_argument(
         "--max-items",
         type=int,
-        default=int(os.getenv("MAX_ITEMS_PER_RUN", "5")),
-        help="1 回の実行での最大投稿数 (デフォルト 5)",
+        default=int(os.getenv("MAX_ITEMS_PER_RUN", "3")),
+        help="1 回の実行での最大投稿数 (デフォルト 3)",
     )
     parser.add_argument(
         "--dry-run",
