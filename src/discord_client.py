@@ -18,8 +18,8 @@ CATEGORY_STYLE = {
     "business": (0x50C878, "💹 経済"),
 }
 
-# Discord Embed limits
-MAX_DESCRIPTION = 4096
+# Discord limits
+MAX_CONTENT = 2000
 MAX_FIELD_VALUE = 1024
 MAX_EMBED_TOTAL = 6000
 
@@ -40,7 +40,7 @@ class DiscordClient:
 
     async def post_run_header(self, client: httpx.AsyncClient, count: int) -> None:
         now = datetime.now().strftime("%Y-%m-%d %H:%M JST")
-        content = f"**[{now}] 速報 {count} 本**"
+        content = f"━━━━━━━━━━━━━━━━━━━━━━\n### 🗞️ {now} — 速報 {count} 本\n━━━━━━━━━━━━━━━━━━━━━━"
         await self._post(client, {"content": content})
 
     async def post_article(
@@ -53,31 +53,23 @@ class DiscordClient:
         badge = importance_badge(item.importance)
 
         if analysis.error:
-            embed = {
-                "title": _truncate(item.title, 250),
-                "url": str(item.url),
-                "description": f"⚠️ 分析エラー: {analysis.error}",
-                "color": 0x808080,
-            }
-            await self._post(client, {"embeds": [embed]})
+            # エラー時は content だけ簡潔に
+            content = (
+                f"{badge}  ·  {category_label}\n"
+                f"## [{_truncate(item.title, 200)}](<{item.url}>)\n"
+                f"⚠️ 分析エラー: {_truncate(analysis.error, 800)}"
+            )
+            await self._post(client, {"content": _truncate(content, MAX_CONTENT)})
             return
 
-        description = _build_description(item, analysis, badge, category_label)
-        fields = _build_fields(analysis)
+        content = _build_content(item, analysis, badge, category_label)
+        embed = _build_analysis_embed(item, analysis, color)
 
-        embed = {
-            "title": _truncate(item.title, 250),
-            "url": str(item.url),
-            "description": description,
-            "color": color,
-            "fields": fields,
-            "footer": {"text": f"Yahoo! ニュース  |  重要度 {item.importance}/10"},
-        }
-        if item.published_at:
-            embed["timestamp"] = item.published_at.isoformat()
+        payload = {"content": content}
+        if embed and (embed.get("fields") or embed.get("description")):
+            payload["embeds"] = [embed]
 
-        _ensure_within_limit(embed)
-        await self._post(client, {"embeds": [embed]})
+        await self._post(client, payload)
 
     async def _post(self, client: httpx.AsyncClient, payload: dict) -> None:
         for attempt in range(3):
@@ -92,32 +84,43 @@ class DiscordClient:
         raise RuntimeError("Discord post failed after retries")
 
 
-def _build_description(
-    item: NewsItem, analysis: AnalysisResult, badge: str, category_label: str
+def _build_content(
+    item: NewsItem,
+    analysis: AnalysisResult,
+    badge: str,
+    category_label: str,
 ) -> str:
-    header = f"{badge}  |  {category_label}"
+    """本文 (見出し + 要約): Discord のメイン領域に大きく表示される部分。"""
+    lines: list[str] = []
+
+    lines.append(f"{badge}  ·  {category_label}")
+    lines.append(f"## [{_truncate(item.title, 200)}](<{item.url}>)")
+
     signals = []
     if item.ranking_position:
         signals.append(f"📊 ランキング #{item.ranking_position}")
     if item.trending_keywords:
-        signals.append(f"🔥 {'/'.join(item.trending_keywords[:3])}")
-    signals_line = "  |  ".join(signals)
+        signals.append(f"🔥 {' / '.join(item.trending_keywords[:3])}")
+    if signals:
+        lines.append("-# " + "  ·  ".join(signals))
 
     summary_ja = analysis.summary.ja or item.summary
-    summary_en = analysis.summary.en
+    if summary_ja:
+        lines.append("")
+        lines.append(f"**📌 要約**")
+        lines.append(summary_ja)
 
-    parts = [header]
-    if signals_line:
-        parts.append(signals_line)
-    parts.append(f"\n**📌 要約**\n{summary_ja}")
-    if summary_en:
-        parts.append(f"_{summary_en}_")
+    if analysis.summary.en:
+        lines.append("")
+        lines.append(f"**Summary (English)**")
+        lines.append(analysis.summary.en)
 
-    text = "\n".join(parts)
-    return _truncate(text, MAX_DESCRIPTION)
+    text = "\n".join(lines)
+    return _truncate(text, MAX_CONTENT)
 
 
-def _build_fields(analysis: AnalysisResult) -> list[dict]:
+def _build_analysis_embed(item: NewsItem, analysis: AnalysisResult, color: int) -> dict:
+    """4 軸解説 + 情報源を Embed (コンパクト表示) に。"""
     fields: list[dict] = []
     for label, bilingual in [
         ("🔍 裏付け / Evidence", analysis.evidence),
@@ -138,20 +141,33 @@ def _build_fields(analysis: AnalysisResult) -> list[dict]:
                 "inline": False,
             }
         )
-    return fields
+
+    if not fields:
+        return {}
+
+    embed = {
+        "color": color,
+        "fields": fields,
+        "footer": {"text": f"Yahoo! ニュース  ·  重要度 {item.importance}/10"},
+    }
+    if item.published_at:
+        embed["timestamp"] = item.published_at.isoformat()
+
+    _ensure_within_limit(embed)
+    return embed
 
 
 def _format_bilingual(bilingual: BilingualText) -> str:
+    """1 フィールド内に JA + EN 併記。embed 内は subtext markdown が効かないので italic + separator。"""
     if not bilingual.ja and not bilingual.en:
         return ""
     if not bilingual.en:
         return _truncate(bilingual.ja, MAX_FIELD_VALUE)
-    # Reserve budget: half for JA, half for EN (italic)
-    ja_budget = MAX_FIELD_VALUE // 2 - 4
-    en_budget = MAX_FIELD_VALUE - ja_budget - 8
+    ja_budget = MAX_FIELD_VALUE // 2 - 8
+    en_budget = MAX_FIELD_VALUE - ja_budget - 20
     ja = _truncate(bilingual.ja, ja_budget)
     en = _truncate(bilingual.en, en_budget)
-    return f"{ja}\n_{en}_"
+    return f"{ja}\n\n*{en}*"
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -163,13 +179,8 @@ def _truncate(text: str, limit: int) -> str:
 
 
 def _ensure_within_limit(embed: dict) -> None:
-    """Embed 合計 6000 文字上限を超えていたら fields を末尾から削る。"""
     while _embed_char_count(embed) > MAX_EMBED_TOTAL and embed.get("fields"):
         embed["fields"].pop()
-    if _embed_char_count(embed) > MAX_EMBED_TOTAL:
-        embed["description"] = _truncate(
-            embed.get("description", ""), MAX_EMBED_TOTAL - 200
-        )
 
 
 def _embed_char_count(embed: dict) -> int:
