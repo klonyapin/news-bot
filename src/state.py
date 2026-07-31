@@ -59,9 +59,11 @@ class PostedState:
         return {v["story_id"] for v in self._data.values() if v.get("story_id")}
 
     def mark_posted(self, url: str, story_id: str = "") -> None:
+        # 既存 URL に story_id が付いていて、新 story_id が空なら既存を保持する
+        existing = self._data.get(url, {})
         self._data[url] = {
             "posted_at": datetime.now(timezone.utc).isoformat(),
-            "story_id": story_id,
+            "story_id": story_id or existing.get("story_id", ""),
         }
 
     def save(self) -> None:

@@ -109,7 +109,7 @@ class ImportanceScorer:
         try:
             response = await self.client.messages.create(
                 model=self.model,
-                max_tokens=2048,
+                max_tokens=8192,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_message}],
             )
@@ -119,11 +119,16 @@ class ImportanceScorer:
 
         text = "".join(b.text for b in response.content if b.type == "text").strip()
         text = _strip_fence(text)
+        data: list[dict] | None = None
         try:
             data = json.loads(text)
         except json.JSONDecodeError as e:
-            logger.warning("Failed to parse importance JSON, falling back: %s", e)
-            return _fallback_by_heat(items)
+            logger.warning("Failed to parse importance JSON strict: %s; trying partial extraction", e)
+            data = _extract_entries_partial(text)
+            if not data:
+                logger.warning("Partial extraction failed, falling back to heat score")
+                return _fallback_by_heat(items)
+            logger.info("Recovered %d entries via partial extraction", len(data))
 
         entries: dict[int, tuple[int, str]] = {}
         for entry in data:
@@ -160,6 +165,28 @@ def _fallback_by_heat(items: list[NewsItem]) -> list[NewsItem]:
         item.model_copy(update={"importance": min(10, int(item.heat_score / max_heat * 10))})
         for item in items
     ]
+
+
+_PARTIAL_ENTRY = re.compile(
+    r'\{[^{}]*?"index"\s*:\s*(\d+)[^{}]*?"importance"\s*:\s*(\d+)'
+    r'(?:[^{}]*?"story_id"\s*:\s*"([^"]*)")?[^{}]*?\}',
+    flags=re.DOTALL,
+)
+
+
+def _extract_entries_partial(text: str) -> list[dict]:
+    """truncation で JSON 配列が閉じない場合、完全に閉じている entry だけを抜き出す。"""
+    entries: list[dict] = []
+    for m in _PARTIAL_ENTRY.finditer(text):
+        try:
+            entries.append({
+                "index": int(m.group(1)),
+                "importance": int(m.group(2)),
+                "story_id": m.group(3) or "",
+            })
+        except (ValueError, TypeError):
+            continue
+    return entries
 
 
 def _strip_fence(text: str) -> str:
