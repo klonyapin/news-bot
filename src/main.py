@@ -71,11 +71,11 @@ async def run(
         return
 
     scorer = ImportanceScorer()
-    scored = await scorer.score(items)
-
     recent_stories = state.recent_story_ids()
     if recent_stories:
-        logger.info("Excluding %d recently-posted stories", len(recent_stories))
+        logger.info("Passing %d recent story_ids to Haiku for reuse", len(recent_stories))
+
+    scored = await scorer.score(items, recent_story_ids=recent_stories)
 
     important = filter_important(
         scored,
@@ -94,8 +94,10 @@ async def run(
 
     for i, item in enumerate(important, 1):
         logger.info(
-            "  [%d] importance=%d cat=%s | %s",
-            i, item.importance, item.category, item.title[:60],
+            "  [%d] importance=%d cat=%s src=%s story=%s | %s",
+            i, item.importance, item.category, item.source,
+            item.story_id or "-",
+            item.title[:60],
         )
 
     analyzer = Analyzer()

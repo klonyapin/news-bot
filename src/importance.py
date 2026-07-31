@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 IMPORTANCE_MODEL = "claude-haiku-4-5"
 
 
-SYSTEM_PROMPT = """あなたはニュース編集長です。以下の記事を採点し、同じ出来事の別記事をグルーピングしてください。
+SYSTEM_PROMPT_BASE = """あなたはニュース編集長です。以下の記事を採点し、同じ出来事の別記事をグルーピングしてください。
 
 **採点基準 (0-10):**
 - 9-10: 一大事。金融市場・国政・国際情勢を大きく動かす。歴史的節目。
@@ -27,22 +27,47 @@ SYSTEM_PROMPT = """あなたはニュース編集長です。以下の記事を�
 - 3-4:  通常のニュース。記録的価値はあるがトピックとして目新しくない。
 - 0-2:  業界内・地域内のニュース、話題性のみ、芸能・スポーツ雑報。
 
-**story_id (最重要):**
-同じ「出来事」の記事は同じ story_id を付けてください。
-- 例1: 「熊本地震死者36人」「被災自治体に交付税前倒し」「新幹線再開困難」→ すべて `kumamoto_quake_2026`
-- 例2: 「日銀 政策金利据え置き」「日銀総裁 上振れリスク意識」→ `boj_meeting_202607`
-- 例3: 「ハマス武装解除合意」「米大統領イラン打撃発言」→ 別 story なので別 id
-- スラグは小文字英数 + アンダースコア、20 文字以内
-- 過去に流布した同じ話題には出来る限り同じ id を使う (例えば熊本地震は `kumamoto_quake_2026` に統一)
+**日本国内・海外どちらも同じ基準で評価**すること。海外ソース (BBC, Reuters, Bloomberg など) が英語タイトルでも、内容の重要度で採点する。「日本語だから」「日本の話題だから」で加点しない。
 
+**story_id (最重要 - dedup の要):**
+同じ「大きな出来事」の記事はすべて同じ story_id を付ける。以下は同一 story:
+- ある災害の [被害報告 / 死者数更新 / インフラ被害 / 政府対応 / 支援策 / 追悼]
+- ある政策会合の [事前観測 / 決定発表 / 要人発言 / 市場反応 / 続報解説]
+- ある外交合意の [第一報 / 当事者コメント / 各国反応 / 分析記事]
+- ある事件の [発生 / 被害者情報 / 容疑者情報 / 捜査進展]
+
+例:
+- 「熊本地震死者36人」「被災自治体に交付税前倒し」「新幹線再開困難」→ すべて `kumamoto_quake_2026`
+  (地震という 1 つの災害の異なる側面。分けない)
+- 「日銀 政策金利据え置き」「日銀総裁 上振れリスク意識」→ `boj_meeting_202607`
+- 「ハマス武装解除合意」「トランプがイラン攻撃発言」→ 別 story なので別 id
+
+スラグは小文字英数 + アンダースコア、40 文字以内。汎用的な短いスラグにする (`kumamoto_quake_2026`, `boj_meeting_202607` のような形式)。
+"""
+
+RECENT_STORIES_TEMPLATE = """
+
+**過去 72 時間で既に投稿した story_id (再利用を優先):**
+以下のいずれかに該当する記事があれば、**必ず同じ story_id を再利用**してください。新しいスラグを作らない:
+{recent}
+"""
+
+OUTPUT_FORMAT_PROMPT = """
 **厳密に以下の JSON スキーマで返答すること (前後に文章を付けない):**
 
 [{"index": 0, "importance": 8, "story_id": "kumamoto_quake_2026", "reason": "..."}, ...]
 
 - index は 0 始まり、入力順に対応
-- 全記事に必ずスコアを付ける
+- 全記事に必ずスコアと story_id を付ける
 - reason は 20 文字以内で簡潔に
 """
+
+
+def build_system_prompt(recent_story_ids: set[str]) -> str:
+    if not recent_story_ids:
+        return SYSTEM_PROMPT_BASE + OUTPUT_FORMAT_PROMPT
+    recent_list = "\n".join(f"- `{sid}`" for sid in sorted(recent_story_ids))
+    return SYSTEM_PROMPT_BASE + RECENT_STORIES_TEMPLATE.format(recent=recent_list) + OUTPUT_FORMAT_PROMPT
 
 
 _SLUG_ALLOWED = re.compile(r"[^a-z0-9_]")
@@ -61,22 +86,31 @@ class ImportanceScorer:
         self.client = AsyncAnthropic(api_key=api_key)
         self.model = model or IMPORTANCE_MODEL
 
-    async def score(self, items: list[NewsItem]) -> list[NewsItem]:
-        """全記事に importance と story_id を付けて返す。API 失敗時は heat 順の疑似スコアを付ける。"""
+    async def score(
+        self,
+        items: list[NewsItem],
+        recent_story_ids: set[str] | None = None,
+    ) -> list[NewsItem]:
+        """全記事に importance と story_id を付けて返す。API 失敗時は heat 順の疑似スコアを付ける。
+
+        recent_story_ids: 過去 72h の story_id 集合を渡すと、Haiku がそれを再利用するように促される。
+        """
         if not items:
             return items
 
         headlines = "\n".join(
-            f"[{i}] ({item.category}) {item.title} | 要約: {item.summary[:100] or '(なし)'}"
+            f"[{i}] ({item.category} / {item.source}) {item.title} | 要約: {item.summary[:100] or '(なし)'}"
             for i, item in enumerate(items)
         )
         user_message = f"以下の記事を採点し、同じ出来事の記事に同じ story_id を付けてください。\n\n{headlines}"
+
+        system_prompt = build_system_prompt(recent_story_ids or set())
 
         try:
             response = await self.client.messages.create(
                 model=self.model,
                 max_tokens=2048,
-                system=SYSTEM_PROMPT,
+                system=system_prompt,
                 messages=[{"role": "user", "content": user_message}],
             )
         except Exception as e:
