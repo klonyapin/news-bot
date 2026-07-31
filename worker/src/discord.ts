@@ -1,3 +1,4 @@
+import type { NhkAlert } from "./nhk";
 import type { QuakeReport } from "./types";
 
 const COLOR_TSUNAMI_MAJOR = 0x8b0000;   // 暗い赤
@@ -102,6 +103,50 @@ export async function postToDiscord(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+const COLOR_NHK_URGENT = 0xdc143c;
+
+export async function postNhkAlert(
+  webhookUrl: string,
+  alert: NhkAlert,
+): Promise<void> {
+  const content = [
+    `🚨 **【NHK 速報】**  ${formatJst(alert.published)}`,
+    "",
+    truncate(alert.title, 800),
+    "",
+    `-# 検知タグ: \`${alert.matchedKeyword}\`  ·  [NHK 記事全文](<${alert.link}>)`,
+  ].join("\n");
+
+  const payload = {
+    content: truncate(content, 2000),
+    embeds: [
+      {
+        color: COLOR_NHK_URGENT,
+        footer: { text: "NHK ニュース RSS 速報" },
+      },
+    ],
+  };
+
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (res.status === 429) {
+      const wait = parseFloat(res.headers.get("Retry-After") ?? "1");
+      await sleep(wait * 1000);
+      continue;
+    }
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Discord post failed ${res.status}: ${body.slice(0, 200)}`);
+    }
+    return;
+  }
+  throw new Error("Discord post failed after retries");
 }
 
 function truncate(s: string, limit: number): string {

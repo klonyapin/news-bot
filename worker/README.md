@@ -1,20 +1,30 @@
 # news-bot-quake (Cloudflare Worker)
 
-気象庁 (JMA) の地震・津波電文を毎分ポーリングし、震度閾値以上または津波警報が出た瞬間に Discord へ速報する Worker。
+**2 種類の速報**を毎分ポーリングして Discord に即通知する Worker。
 
-**遅延**: JMA 発表から最大 60 秒 + 数秒 (post) ≈ **1 分前後**。真の速報。
+| Tier | ソース | 対象 | 遅延 |
+|------|--------|------|------|
+| **Tier 1** | JMA 電文 XML | 地震・津波 (震度閾値以上、または津波警報) | **~1 分** |
+| **Tier 3** | NHK RSS (主要・社会) | 非地震の緊急事態 (テロ・銃撃・崩御・大規模爆発・特別警報・弾道ミサイル発射等) | **~1-2 分** |
+
+両方が同じ Cloudflare Worker で毎分 cron で並列実行される。Tier 3 は NHK が使う `【速報】` 等の高信号キーワードで frontend filter するため、真に緊急なイベントだけ通知される (通常日は Tier 3 は 0 posts)。
 
 ## 動作原理
 
 ```
 毎分 cron
-  → https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml を fetch
-  → KV に保存した seen-entry-ids と突合、新規エントリだけ抽出
-  → 各エントリの XML 電文を fetch
-  → parseで震度・震源・M・津波区分を抽出
-  → 閾値 (MIN_SHINDO / TSUNAMI_ALWAYS_POST) で filter
-  → 通過分を Discord webhook に POST
-  → seen ID を KV に write back
+  ├─► Tier 1 (JMA)
+  │    → https://www.data.jma.go.jp/developer/xml/feed/eqvol.xml
+  │    → KV (eqvol:seen-entry-ids) で dedup
+  │    → 震度/津波の parse + 閾値 filter
+  │    → Discord webhook に POST
+  │
+  └─► Tier 3 (NHK)
+       → https://www3.nhk.or.jp/rss/news/cat0.xml + cat1.xml
+       → KV (nhk:seen-entry-ids) で dedup
+       → 高信号キーワード判定 (【速報】/【緊急】/崩御/テロ/銃撃事件/ミサイル発射等)
+       → 地震関連 (【地震速報】等) は除外 (Tier 1 と重複回避)
+       → Discord webhook に POST (タイトル + リンクのみ、LLM 解析なし)
 ```
 
 ## セットアップ
