@@ -1,0 +1,33 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "news-bot-quake",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-01-15",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "triggers": {
+    // 毎分ポーリング。JMA eqvol.xml は毎分更新なので同ペースで十分。
+    "crons": ["* * * * *"]
+  },
+
+  "vars": {
+    // 震度この値以上で通知 (1|2|3|4|5弱|5強|6弱|6強|7 → 内部で数値化)
+    "MIN_SHINDO": "3",
+    // 津波警報/注意報は震度に関係なく必ず投稿
+    "TSUNAMI_ALWAYS_POST": "true"
+  },
+
+  "kv_namespaces": [
+    {
+      "binding": "SEEN",
+      "id": "REPLACE_WITH_KV_ID_AFTER_wrangler_kv_create"
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+
+  // secrets (別途 wrangler secret put で登録):
+  //   DISCORD_WEBHOOK_URL
+}

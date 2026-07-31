@@ -1,6 +1,18 @@
 # news-bot
 
-Yahoo! ニュース (国内・国際・経済) から特に重要な速報を選び、Claude が **裏付け・背景・注意点・今後の動向** を日英併記で解説して Discord に投稿する Bot。GitHub Actions で **2 時間おき** に自動実行し、投稿済み URL は cache で永続化して重複を防ぐ。
+Discord ニュース Bot の**二層構造**プロジェクト。
+
+| 層 | 対象 | 遅延 | ランタイム | ディレクトリ |
+|----|------|------|------------|--------------|
+| **速報層 (Tier 1)** | 地震・津波 (JMA 電文) | **~1 分** | Cloudflare Workers | [`worker/`](worker/) |
+| **解説層 (Tier 2)** | 国内・国際・経済ニュース | ~2 時間 | GitHub Actions | [`src/`](src/) |
+
+- **Tier 1 (worker/)**: 気象庁 (JMA) の eqvol.xml を毎分ポーリングし、震度閾値以上または津波警報が出た瞬間に Discord へ即投稿。真の速報。詳細は [`worker/README.md`](worker/README.md)。
+- **Tier 2 (src/)**: Yahoo! ニュース (国内・国際・経済) から重要な話題を Haiku で選別し、Sonnet + Web 検索で **裏付け・背景・注意点・今後の動向** を日英併記で解説。GitHub Actions で 2 時間おき自動実行。以下がこの層のドキュメント。
+
+---
+
+## Tier 2: 話題ニュース解説層
 
 ## 全体像
 
