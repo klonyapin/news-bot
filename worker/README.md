@@ -25,45 +25,48 @@
 - Cloudflare アカウント (無料枠で十分)
 - Discord webhook URL (既存 GH Actions bot と同じでも別でも可)
 
-### 1. 依存インストール
+### A. 初回セットアップ (自動、対話式スクリプト)
 
 ```sh
 cd worker
-npm install
-```
 
-### 2. Cloudflare にログイン
-
-```sh
+# Cloudflare にログイン (ブラウザで OAuth 承認、または CLOUDFLARE_API_TOKEN 環境変数)
 npx wrangler login
+
+# ワンコマンドで完了 (依存インストール + KV 作成 + wrangler.jsonc 修正 + Discord secret 登録 + deploy)
+./bootstrap.sh
 ```
 
-ブラウザで Cloudflare の OAuth 画面が開くので許可。
+スクリプトは冪等なので、途中で失敗しても何度でも再実行できます。
 
-### 3. KV namespace を作成
+セットアップ完了後、`wrangler.jsonc` に KV ID が書き込まれるので commit & push:
 
 ```sh
-npx wrangler kv namespace create SEEN
+git add wrangler.jsonc && git commit -m "wire KV ID" && git push
 ```
 
-出力される `id` を `wrangler.jsonc` の `kv_namespaces[0].id` に貼り付ける (`REPLACE_WITH_KV_ID_AFTER_wrangler_kv_create` を差し替え)。
+### B. 継続的デプロイ (以降のコード変更は自動)
 
-### 4. Discord webhook を secret として登録
+`worker/**` を触って push すると **GitHub Actions が自動で Cloudflare にデプロイ**します (`.github/workflows/deploy-worker.yml`)。
+
+事前に GH リポジトリの Secrets に以下を登録:
+
+| Secret | 取得場所 |
+|--------|----------|
+| `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens → "Edit Cloudflare Workers" テンプレートで作成 |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard 右下、または `npx wrangler whoami` の出力 |
 
 ```sh
-npx wrangler secret put DISCORD_WEBHOOK_URL
-# プロンプトで URL をペースト → Enter (履歴に残らない)
+gh secret set CLOUDFLARE_API_TOKEN     # プロンプトでペースト
+gh secret set CLOUDFLARE_ACCOUNT_ID    # プロンプトでペースト
 ```
 
-### 5. デプロイ
-
-```sh
-npx wrangler deploy
+以降の流れ:
+```
+コード編集 → git push → GH Actions → npm ci → tsc --noEmit → wrangler deploy
 ```
 
-これで毎分 cron が回り始める。
-
-### 6. 動作確認
+### C. 動作確認
 
 ```sh
 # ログをリアルタイム tail
