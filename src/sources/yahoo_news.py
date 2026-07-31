@@ -60,6 +60,7 @@ async def fetch_rss(client: httpx.AsyncClient, category: Category) -> list[NewsI
                 summary=entry.get("summary", ""),
                 category=category,
                 published_at=published,
+                source="Yahoo!",
             )
         )
     logger.info("Fetched %d items from %s RSS", len(items), category)

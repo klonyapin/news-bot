@@ -12,7 +12,7 @@ from src.analyzer import Analyzer
 from src.discord_client import DiscordClient
 from src.importance import ImportanceScorer, filter_important
 from src.models import NewsItem
-from src.sources import yahoo_news, yahoo_realtime
+from src.sources import international, yahoo_news, yahoo_realtime
 from src.state import PostedState
 
 
@@ -29,13 +29,27 @@ logger = logging.getLogger(__name__)
 
 
 async def collect_candidates() -> list[NewsItem]:
-    """全ソースから記事とトレンドを並列取得。"""
+    """全ソース (Yahoo + 海外) から記事とトレンドを並列取得。"""
     trending_task = asyncio.create_task(yahoo_realtime.fetch_trending_keywords())
-    news_task = asyncio.create_task(yahoo_news.fetch_all())
-    trending = await trending_task
-    items = await news_task
+    yahoo_task = asyncio.create_task(yahoo_news.fetch_all())
+    intl_task = asyncio.create_task(international.fetch_all())
+
+    trending, yahoo_items, intl_items = await asyncio.gather(
+        trending_task, yahoo_task, intl_task
+    )
+
+    items = yahoo_items + intl_items
     items = yahoo_news.apply_trending(items, trending)
-    logger.info("Collected %d candidate items", len(items))
+    items = yahoo_news.deduplicate(items)
+
+    by_source: dict[str, int] = {}
+    for item in items:
+        by_source[item.source] = by_source.get(item.source, 0) + 1
+    logger.info(
+        "Collected %d candidates: %s",
+        len(items),
+        ", ".join(f"{k}={v}" for k, v in sorted(by_source.items())),
+    )
     return items
 
 

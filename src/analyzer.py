@@ -63,8 +63,9 @@ class Analyzer:
         self.model = model or os.getenv("CLAUDE_MODEL", DEFAULT_MODEL)
 
     async def analyze(self, item: NewsItem) -> AnalysisResult:
-        user_message = f"""以下の Yahoo! ニュース記事を解説してください。
+        user_message = f"""以下のニュース記事を解説してください。
 
+ソース: {item.source}
 タイトル: {item.title}
 URL: {item.url}
 カテゴリ: {item.category}
@@ -74,7 +75,8 @@ URL: {item.url}
 - アクセスランキング順位: {item.ranking_position or "圏外"}
 - リアルタイム検索で関連したキーワード: {", ".join(item.trending_keywords) or "なし"}
 
-Web 検索で本文と一次情報を必ず確認し、指定された JSON スキーマで日英併記の解説を出力してください。"""
+Web 検索で本文と一次情報を必ず確認し、指定された JSON スキーマで日英併記の解説を出力してください。
+タイトルが英語の場合でも、summary/evidence/background/caveats/outlook の "ja" フィールドは必ず日本語で書いてください (翻訳して読者が日本語だけで完結して理解できるように)。"""
 
         messages = [{"role": "user", "content": user_message}]
         tools = [

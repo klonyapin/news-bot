@@ -171,7 +171,7 @@ def _build_analysis_embed(item: NewsItem, analysis: AnalysisResult, color: int) 
     embed = {
         "color": color,
         "fields": fields,
-        "footer": {"text": f"Yahoo! ニュース  ·  重要度 {item.importance}/10"},
+        "footer": {"text": f"{item.source}  ·  重要度 {item.importance}/10"},
     }
     if item.published_at:
         embed["timestamp"] = item.published_at.isoformat()
