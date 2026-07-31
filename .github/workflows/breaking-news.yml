@@ -1,0 +1,66 @@
+name: Breaking news post
+
+on:
+  schedule:
+    # 2 時間ごと (JST 06:00, 08:00, 10:00, ..., 24:00 / UTC 21:00, 23:00, 01:00, ..., 15:00)
+    - cron: "0 21,23,1,3,5,7,9,11,13,15 * * *"
+  workflow_dispatch:
+    inputs:
+      threshold:
+        description: "重要度スコアの投稿閾値 (0-10)"
+        required: false
+        default: "7"
+      max_items:
+        description: "最大投稿数"
+        required: false
+        default: "5"
+      dry_run:
+        description: "dry-run (Discord に投稿しない)"
+        type: boolean
+        required: false
+        default: false
+      skip_dedupe:
+        description: "state.json を無視 (重複投稿する)"
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: news-bot-post
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore posted state
+        uses: actions/cache@v4
+        with:
+          path: state/posted.json
+          key: news-bot-posted-${{ github.run_id }}
+          restore-keys: |
+            news-bot-posted-
+
+      - name: Run news bot
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          IMPORTANCE_THRESHOLD: ${{ github.event.inputs.threshold || '7' }}
+          MAX_ITEMS_PER_RUN: ${{ github.event.inputs.max_items || '5' }}
+          LOG_LEVEL: INFO
+        run: |
+          FLAGS=""
+          [ "${{ github.event.inputs.dry_run }}" = "true" ] && FLAGS="$FLAGS --dry-run"
+          [ "${{ github.event.inputs.skip_dedupe }}" = "true" ] && FLAGS="$FLAGS --skip-dedupe"
+          python -m src.main $FLAGS
