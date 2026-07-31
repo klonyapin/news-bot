@@ -13,11 +13,13 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_MODEL = "claude-sonnet-5"
+MAX_TOKENS = 16000
+MAX_PAUSE_CONTINUATIONS = 3
 
 
 SYSTEM_PROMPT = """あなたは日本の政治・国際・経済ニュースを鋭く読み解く報道アナリストです。
 
-与えられた記事について、Web 検索で一次情報を確認したうえで、以下の 4 軸を日英併記で解説してください。
+与えられた記事について、Web 検索で一次情報を確認したうえで、以下の 5 軸を日英併記で解説してください。
 
 **軸の定義:**
 1. summary (要約): 3-4 行で「何が起きたか」
@@ -31,7 +33,8 @@ SYSTEM_PROMPT = """あなたは日本の政治・国際・経済ニュースを�
 - 固有名詞は初出でカッコ内にローマ字併記 (例: 日銀 → the Bank of Japan (BoJ))
 - 日本特有の概念は簡潔な補足を入れる
 
-**厳密に以下の JSON スキーマで返答すること (前後に文章を付けない):**
+**出力フォーマット (厳守):**
+必ず単一の JSON オブジェクトのみを返す。JSON の前後に文章・見出し・コードフェンスを一切付けない。
 
 {
   "summary":    {"ja": "...", "en": "..."},
@@ -40,13 +43,12 @@ SYSTEM_PROMPT = """あなたは日本の政治・国際・経済ニュースを�
   "caveats":    {"ja": "...", "en": "..."},
   "outlook":    {"ja": "...", "en": "..."},
   "sources": [
-    {"title": "...", "url": "https://..."},
-    ...
+    {"title": "...", "url": "https://..."}
   ]
 }
 
-sources には Web 検索で参照した情報源を最大 3 件。憶測になる部分は "〜とみられる" と明示。
-"""
+sources は Web 検索で参照した情報源を最大 3 件。憶測になる部分は "〜とみられる" と明示。
+各テキストは日英とも 300 文字前後に収める (合計出力トークンを 8000 以下に)。"""
 
 
 class Analyzer:
@@ -68,20 +70,17 @@ URL: {item.url}
 
 Web 検索で本文と一次情報を必ず確認し、指定された JSON スキーマで日英併記の解説を出力してください。"""
 
+        messages = [{"role": "user", "content": user_message}]
+        tools = [
+            {
+                "type": "web_search_20260209",
+                "name": "web_search",
+                "max_uses": 3,
+            }
+        ]
+
         try:
-            response = await self.client.messages.create(
-                model=self.model,
-                max_tokens=6144,
-                system=SYSTEM_PROMPT,
-                tools=[
-                    {
-                        "type": "web_search_20260209",
-                        "name": "web_search",
-                        "max_uses": 4,
-                    }
-                ],
-                messages=[{"role": "user", "content": user_message}],
-            )
+            response = await self._call_with_pause_handling(messages, tools)
         except Exception as e:
             logger.error("Claude API error for %s: %s", item.title[:40], e)
             return AnalysisResult(
@@ -91,26 +90,80 @@ Web 検索で本文と一次情報を必ず確認し、指定された JSON ス�
 
         return self._parse_response(response, item)
 
+    async def _call_with_pause_handling(self, messages, tools):
+        """pause_turn / refusal を含む完了パターンを扱いつつ streaming で呼ぶ。"""
+        for attempt in range(MAX_PAUSE_CONTINUATIONS + 1):
+            async with self.client.messages.stream(
+                model=self.model,
+                max_tokens=MAX_TOKENS,
+                system=SYSTEM_PROMPT,
+                tools=tools,
+                messages=messages,
+            ) as stream:
+                response = await stream.get_final_message()
+
+            if response.stop_reason == "pause_turn":
+                if attempt >= MAX_PAUSE_CONTINUATIONS:
+                    logger.warning("pause_turn but max continuations reached")
+                    return response
+                logger.info("pause_turn received, continuing (attempt %d)", attempt + 1)
+                messages = messages + [{"role": "assistant", "content": response.content}]
+                continue
+            return response
+        return response
+
     def _parse_response(self, response, item: NewsItem) -> AnalysisResult:
-        text_blocks = [block.text for block in response.content if block.type == "text"]
-        if not text_blocks:
-            logger.warning("No text block in response for %s", item.title[:40])
+        stop_reason = getattr(response, "stop_reason", "unknown")
+
+        if stop_reason == "refusal":
+            details = getattr(response, "stop_details", None)
+            reason = getattr(details, "explanation", "") if details else ""
+            logger.warning("Refused: %s (%s)", item.title[:40], reason)
             return AnalysisResult(
                 summary=BilingualText(ja=item.summary or item.title),
-                error="Claude からの応答が空でした",
+                error=f"Claude が分析を拒否 (safety filter): {reason or 'no explanation'}",
+            )
+
+        text_blocks = [block.text for block in response.content if block.type == "text"]
+        block_types = [b.type for b in response.content]
+
+        if not text_blocks:
+            logger.warning(
+                "No text block. stop_reason=%s, blocks=%s, title=%s",
+                stop_reason, block_types, item.title[:40],
+            )
+            return AnalysisResult(
+                summary=BilingualText(ja=item.summary or item.title),
+                error=f"Claude 応答に text ブロックなし (stop_reason={stop_reason}, blocks={block_types})",
             )
 
         raw = "".join(text_blocks).strip()
         raw = _strip_json_fence(raw)
 
+        if not raw:
+            logger.warning(
+                "Empty text after strip. stop_reason=%s, title=%s",
+                stop_reason, item.title[:40],
+            )
+            return AnalysisResult(
+                summary=BilingualText(ja=item.summary or item.title),
+                error=f"Claude 応答が空 (stop_reason={stop_reason})",
+            )
+
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as e:
-            logger.warning("Failed to parse Claude JSON for %s: %s", item.title[:40], e)
-            return AnalysisResult(
-                summary=BilingualText(ja=raw[:500]),
-                error=f"JSON パース失敗: {e}",
+            logger.warning(
+                "JSON parse failed for %s: %s | stop_reason=%s | raw[:200]=%r",
+                item.title[:40], e, stop_reason, raw[:200],
             )
+            # Try lenient parse: extract first {...} block
+            data = _try_lenient_parse(raw)
+            if data is None:
+                return AnalysisResult(
+                    summary=BilingualText(ja=raw[:500]),
+                    error=f"JSON パース失敗: {e} (stop_reason={stop_reason})",
+                )
 
         sources: list[RelatedSource] = []
         for src in data.get("sources", []):
@@ -150,3 +203,36 @@ def _strip_json_fence(text: str) -> str:
             lines = lines[:-1]
         text = "\n".join(lines).strip()
     return text
+
+
+def _try_lenient_parse(text: str):
+    """先頭 { から始まる部分を切り出して parse。truncation 対応。"""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == "\\" and in_str:
+            escape = True
+            continue
+        if c == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start : i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
