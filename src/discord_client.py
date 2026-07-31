@@ -38,9 +38,32 @@ class DiscordClient:
     def __init__(self, webhook_url: str) -> None:
         self.webhook_url = webhook_url
 
-    async def post_run_header(self, client: httpx.AsyncClient, count: int) -> None:
+    async def post_run_header(
+        self,
+        client: httpx.AsyncClient,
+        items: list[NewsItem],
+    ) -> None:
         now = datetime.now().strftime("%Y-%m-%d %H:%M JST")
-        content = f"━━━━━━━━━━━━━━━━━━━━━━\n### 🗞️ {now} — 速報 {count} 本\n━━━━━━━━━━━━━━━━━━━━━━"
+        by_cat: dict[str, int] = {}
+        for item in items:
+            by_cat[item.category] = by_cat.get(item.category, 0) + 1
+        parts = []
+        if by_cat.get("domestic"):
+            parts.append(f"🏛️ 国内 {by_cat['domestic']}")
+        if by_cat.get("world"):
+            parts.append(f"🌏 国際 {by_cat['world']}")
+        if by_cat.get("business"):
+            parts.append(f"💹 経済 {by_cat['business']}")
+        breakdown = "  ·  ".join(parts) if parts else ""
+
+        content = (
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"### 🗞️ 話題ニュース ダイジェスト  ·  {len(items)}件\n"
+            f"{now}"
+        )
+        if breakdown:
+            content += f"\n{breakdown}"
+        content += "\n━━━━━━━━━━━━━━━━━━━━━━"
         await self._post(client, {"content": content})
 
     async def post_article(

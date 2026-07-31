@@ -103,7 +103,7 @@ async def run(
         return item, await analyzer.analyze(item)
 
     async with httpx.AsyncClient() as client:
-        await discord.post_run_header(client, len(important))
+        await discord.post_run_header(client, important)
 
         tasks = [asyncio.create_task(analyze_pair(item)) for item in important]
         posted_count = 0
