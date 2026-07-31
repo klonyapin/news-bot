@@ -20,6 +20,7 @@ class NewsItem(BaseModel):
     ranking_position: int | None = None
     trending_keywords: list[str] = Field(default_factory=list)
     importance: int = 0
+    story_id: str = ""
 
     @property
     def heat_score(self) -> float:

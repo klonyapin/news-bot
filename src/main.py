@@ -58,9 +58,19 @@ async def run(
 
     scorer = ImportanceScorer()
     scored = await scorer.score(items)
-    important = filter_important(scored, threshold=importance_threshold, max_items=max_items)
+
+    recent_stories = state.recent_story_ids()
+    if recent_stories:
+        logger.info("Excluding %d recently-posted stories", len(recent_stories))
+
+    important = filter_important(
+        scored,
+        threshold=importance_threshold,
+        max_items=max_items,
+        exclude_story_ids=recent_stories,
+    )
     logger.info(
-        "After importance filter (threshold=%d): %d/%d items",
+        "After importance+dedup filter (threshold=%d): %d/%d items",
         importance_threshold, len(important), len(scored),
     )
 
@@ -112,7 +122,7 @@ async def run(
             try:
                 await discord.post_article(client, item, analysis)
                 if not analysis.error:
-                    state.mark_posted(str(item.url))
+                    state.mark_posted(str(item.url), story_id=item.story_id)
                     posted_count += 1
             except httpx.HTTPError as e:
                 logger.error("Failed to post %s: %s", item.title[:40], e)

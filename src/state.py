@@ -1,4 +1,8 @@
-"""投稿済み URL の状態管理。GitHub Actions cache で run 間永続化される想定。"""
+"""投稿済み URL の状態管理。GitHub Actions cache で run 間永続化される想定。
+
+各エントリは {"posted_at": iso8601, "story_id": str} を保持。
+古いフォーマット (URL → iso8601 の flat string) からも自動移行する。
+"""
 
 from __future__ import annotations
 
@@ -16,12 +20,11 @@ DEFAULT_TTL_HOURS = 72
 
 
 class PostedState:
-    """URL → 投稿タイムスタンプの辞書。TTL 超過分は自動削除。"""
-
     def __init__(self, path: Path = DEFAULT_STATE_PATH, ttl_hours: int = DEFAULT_TTL_HOURS) -> None:
         self.path = path
         self.ttl = timedelta(hours=ttl_hours)
-        self._data: dict[str, str] = {}
+        # URL -> {"posted_at": iso, "story_id": str}
+        self._data: dict[str, dict] = {}
         self._load()
 
     def _load(self) -> None:
@@ -36,20 +39,30 @@ class PostedState:
             return
 
         now = datetime.now(timezone.utc)
-        for url, ts_str in raw.items():
-            try:
-                ts = datetime.fromisoformat(ts_str)
-                if now - ts <= self.ttl:
-                    self._data[url] = ts_str
-            except ValueError:
+        for url, val in raw.items():
+            entry = _normalize_entry(val)
+            if entry is None:
                 continue
-        logger.info("Loaded %d posted URLs (dropped %d stale)", len(self._data), len(raw) - len(self._data))
+            try:
+                ts = datetime.fromisoformat(entry["posted_at"])
+            except (ValueError, KeyError):
+                continue
+            if now - ts <= self.ttl:
+                self._data[url] = entry
+        logger.info("Loaded %d posted URLs (dropped %d stale/invalid)", len(self._data), len(raw) - len(self._data))
 
     def is_posted(self, url: str) -> bool:
         return url in self._data
 
-    def mark_posted(self, url: str) -> None:
-        self._data[url] = datetime.now(timezone.utc).isoformat()
+    def recent_story_ids(self) -> set[str]:
+        """TTL 内に投稿した story_id 一覧 (cross-run dedup 用)。"""
+        return {v["story_id"] for v in self._data.values() if v.get("story_id")}
+
+    def mark_posted(self, url: str, story_id: str = "") -> None:
+        self._data[url] = {
+            "posted_at": datetime.now(timezone.utc).isoformat(),
+            "story_id": story_id,
+        }
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -57,4 +70,20 @@ class PostedState:
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(self._data, f, ensure_ascii=False, indent=2, sort_keys=True)
         tmp.replace(self.path)
-        logger.info("Saved %d posted URLs to %s", len(self._data), self.path)
+        story_count = len({v.get("story_id") for v in self._data.values() if v.get("story_id")})
+        logger.info(
+            "Saved %d posted URLs / %d distinct stories to %s",
+            len(self._data), story_count, self.path,
+        )
+
+
+def _normalize_entry(val) -> dict | None:
+    """旧フォーマット (URL → iso string) と新フォーマット (dict) の両方を受ける。"""
+    if isinstance(val, str):
+        return {"posted_at": val, "story_id": ""}
+    if isinstance(val, dict):
+        ts = val.get("posted_at")
+        if not isinstance(ts, str):
+            return None
+        return {"posted_at": ts, "story_id": str(val.get("story_id", ""))}
+    return None
