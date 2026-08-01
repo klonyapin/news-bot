@@ -1,7 +1,7 @@
 import { fetchFeed, fetchReport } from "./jma";
 import { fetchUrgentAlerts } from "./nhk";
 import { postToDiscord, postNhkAlert } from "./discord";
-import { type Env, shindoToNumber } from "./types";
+import { type Env, parseMinShindo, shindoToNumber } from "./types";
 
 const SEEN_KEY = "eqvol:seen-entry-ids";
 const NHK_SEEN_KEY = "nhk:seen-entry-ids";
@@ -37,7 +37,7 @@ function shouldPost(report: Awaited<ReturnType<typeof fetchReport>>, env: Env): 
   if (env.TSUNAMI_ALWAYS_POST === "true" && report.tsunami && report.tsunami !== "none") {
     return true;
   }
-  const minShindo = parseFloat(env.MIN_SHINDO || "3");
+  const minShindo = parseMinShindo(env.MIN_SHINDO);
   const observed = shindoToNumber(report.maxShindo);
   if (observed < 0) {
     // 震源のみの一報 (震度未確定) は初回だけ通知する方針として false にしておく

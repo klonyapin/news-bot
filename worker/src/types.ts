@@ -52,3 +52,16 @@ export function shindoToNumber(s: string | undefined): number {
   };
   return map[s.trim()] ?? -1;
 }
+
+/** MIN_SHINDO env var のパース。"5強" や "5.5" のような両フォーマットを受ける。 */
+export function parseMinShindo(raw: string | undefined, fallback: number = 3): number {
+  if (!raw) return fallback;
+  const trimmed = raw.trim();
+  // 震度表記 (5強 等) を優先
+  const asShindo = shindoToNumber(trimmed);
+  if (asShindo >= 0) return asShindo;
+  // 数値文字列 (5.5, 3 等) にフォールバック
+  const asFloat = parseFloat(trimmed);
+  if (!isNaN(asFloat)) return asFloat;
+  return fallback;
+}
