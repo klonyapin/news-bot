@@ -1,0 +1,33 @@
+name: Filler post (cat + light news)
+
+on:
+  schedule:
+    # Tier 2 news (JST 6/10/14/18/22) の谷間 = JST 8/12/16/20 に filler
+    # UTC 換算: 23:00 (前日 24-1=23)、03:00、07:00、11:00
+    - cron: "0 23,3,7,11 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: news-bot-filler
+  cancel-in-progress: false
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install httpx feedparser
+
+      - name: Post filler
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          LOG_LEVEL: INFO
+        run: python -m src.filler
