@@ -2,9 +2,9 @@ name: Filler post (cat + light news)
 
 on:
   schedule:
-    # Tier 2 news (JST 6/10/14/18/22) の谷間 = JST 8/12/16/20 に filler
-    # UTC 換算: 23:00 (前日 24-1=23)、03:00、07:00、11:00
-    - cron: "0 23,3,7,11 * * *"
+    # 毎時 0 分 (1 時間おき、24 回/日)
+    # Tier 2 news (JST 6/10/14/18/22) と重なる時は news + 猫が同時に流れる
+    - cron: "0 * * * *"
   workflow_dispatch:
 
 concurrency:
