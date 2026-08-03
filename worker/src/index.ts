@@ -1,6 +1,7 @@
 import { fetchFeed, fetchReport } from "./jma";
 import { fetchUrgentAlerts } from "./nhk";
 import { postToDiscord, postNhkAlert } from "./discord";
+import { postFiller } from "./filler";
 import { type Env, parseMinShindo, shindoToNumber } from "./types";
 
 const SEEN_KEY = "eqvol:seen-entry-ids";
@@ -118,11 +119,17 @@ async function nhkTick(env: Env, _ctx: ExecutionContext): Promise<void> {
 }
 
 export default {
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    // JMA (Tier 1) と NHK (Tier 3) を並列で回す。同じ Worker の同じ cron 発火で両方処理する
-    ctx.waitUntil(
-      Promise.allSettled([tick(env, ctx), nhkTick(env, ctx)]).then(() => undefined),
-    );
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // event.cron でどのトリガーで発火したか判別
+    // - "0 * * * *" : 毎時 filler
+    // - "* * * * *" : 毎分の JMA + NHK
+    if (event.cron === "0 * * * *") {
+      ctx.waitUntil(postFiller(env.DISCORD_WEBHOOK_URL));
+    } else {
+      ctx.waitUntil(
+        Promise.allSettled([tick(env, ctx), nhkTick(env, ctx)]).then(() => undefined),
+      );
+    }
   },
 
   /**
@@ -135,6 +142,7 @@ export default {
       const jobs: Promise<unknown>[] = [];
       if (which === "jma" || which === "both") jobs.push(tick(env, ctx));
       if (which === "nhk" || which === "both") jobs.push(nhkTick(env, ctx));
+      if (which === "filler") jobs.push(postFiller(env.DISCORD_WEBHOOK_URL));
       const results = await Promise.allSettled(jobs);
       return Response.json({
         ok: results.every((r) => r.status === "fulfilled"),

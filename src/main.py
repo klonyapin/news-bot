@@ -153,8 +153,8 @@ def main() -> None:
     parser.add_argument(
         "--threshold",
         type=int,
-        default=int(os.getenv("IMPORTANCE_THRESHOLD", "7")),
-        help="重要度スコアの投稿閾値 (0-10, デフォルト 7)",
+        default=int(os.getenv("IMPORTANCE_THRESHOLD", "6")),
+        help="重要度スコアの投稿閾値 (0-10, デフォルト 6)",
     )
     parser.add_argument(
         "--max-items",

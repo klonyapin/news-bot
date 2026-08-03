@@ -6,8 +6,10 @@
   "compatibility_flags": ["nodejs_compat"],
 
   "triggers": {
-    // 毎分ポーリング。JMA eqvol.xml は毎分更新なので同ペースで十分。
-    "crons": ["* * * * *"]
+    "crons": [
+      "* * * * *",     // 毎分: JMA (Tier 1) + NHK (Tier 3) の速報監視
+      "0 * * * *"      // 毎時 0 分: filler (猫画像 + 軽ニュース)
+    ]
   },
 
   "vars": {

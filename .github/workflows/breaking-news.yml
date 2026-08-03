@@ -9,7 +9,7 @@ on:
       threshold:
         description: "重要度スコアの投稿閾値 (0-10)"
         required: false
-        default: "7"
+        default: "6"
       max_items:
         description: "最大投稿数"
         required: false
@@ -56,7 +56,7 @@ jobs:
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          IMPORTANCE_THRESHOLD: ${{ github.event.inputs.threshold || '7' }}
+          IMPORTANCE_THRESHOLD: ${{ github.event.inputs.threshold || '6' }}
           MAX_ITEMS_PER_RUN: ${{ github.event.inputs.max_items || '3' }}
           LOG_LEVEL: INFO
         run: |
